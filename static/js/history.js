@@ -25,10 +25,14 @@
     }
 
     function decompilersBadge(item, total) {
-        const done = item.decompiled + item.failed;
+        const skipped = item.skipped || 0;
+        const done = item.decompiled + item.failed + skipped;
         if (!done) return badge('Pending');
-        if (item.failed) return badge(`${item.decompiled}/${total} · ${item.failed} failed`, 'warn');
-        return badge(`${item.decompiled}/${total}`, done >= total ? 'ok' : null);
+        // Skipped decompilers can't handle this binary: they don't count.
+        const expected = total - skipped;
+        const title = skipped ? `${skipped} skipped (binary not supported)` : '';
+        if (item.failed) return badge(`${item.decompiled}/${expected} · ${item.failed} failed`, 'warn', title);
+        return badge(`${item.decompiled}/${expected}`, done >= total ? 'ok' : null, title);
     }
 
     function analysisBadge(item) {

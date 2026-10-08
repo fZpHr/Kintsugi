@@ -184,7 +184,7 @@ The commercial ones (Binary Ninja, Hex-Rays, dewolf, Relyze) need your own licen
 ## Limitations
 
 - The LLM can still be wrong. The merge is built to be checked: compare a function with the decompiler its `/* from: ... */` line names.
-- Boomerang only handles 32-bit binaries, and hangs on some of them (it is then reported as timed out); the merge simply goes without it.
+- Decompilers known not to handle a binary's format, architecture or bitness are skipped rather than run (see [`explorer/compatibility.py`](explorer/compatibility.py)). Boomerang, for instance, only handles 32-bit binaries, and hangs on some of them: it then gives up after 60 s (`BOOMERANG_TIMEOUT`), and the merge goes without it.
 - RecStudio runs without the default seccomp profile, which blocks the 32-bit socket calls of its embedded web server (see `docker-compose.yml`).
 - Large binaries make slow decompilers and long prompts: the longest outputs are truncated to `AI_MAX_INPUT_CHARS`.
 

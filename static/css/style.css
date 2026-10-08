@@ -749,6 +749,8 @@ body.dragging .dropzone {
 [data-status="waiting"] .dot { background: var(--accent); animation: breathe 1.4s ease-in-out infinite; }
 [data-status="done"] .dot { background: var(--ok); }
 [data-status="failed"] .dot { background: var(--err); }
+[data-status="skipped"] .dot { background: transparent; border: 1px solid var(--faint); }
+.dchip[data-status="skipped"] { color: var(--muted); }
 
 .decompilers-grid {
     display: grid;

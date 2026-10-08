@@ -81,18 +81,21 @@ ace.config.set('basePath', 'https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.14/')
 
     function emitProgress() {
         const done = Object.keys(results).length;
-        const failed = Object.values(results).filter((r) => r.error !== null).length;
+        const skipped = Object.values(results).filter((r) => r.skipped).length;
+        const failed = Object.values(results).filter((r) => r.error !== null && !r.skipped).length;
         const total = names.length;
-
-        const succeeded = done - failed;
+        const succeeded = done - failed - skipped;
+        // Decompilers that can't handle this binary are skipped: they don't count.
+        const expected = total - skipped;
 
         // Count successes, not finished runs: "9/9" must mean all of them worked.
         const badge = document.getElementById('decompilers_badge');
-        badge.textContent = `${succeeded}/${total}`;
-        badge.title = `${succeeded} succeeded, ${failed} failed, ${total - done} pending`;
+        badge.textContent = `${succeeded}/${expected}`;
+        badge.title = `${succeeded} succeeded, ${failed} failed, ${skipped} skipped, ${total - done} pending`;
         document.getElementById('decompile_progress').style.width = total ? `${(100 * done) / total}%` : '0';
-        let sub = done < total ? `${done}/${total} finished` : `${succeeded}/${total} succeeded`;
+        let sub = done < total ? `${done - skipped}/${expected} finished` : `${succeeded}/${expected} succeeded`;
         if (failed) sub += ` · ${failed} failed`;
+        if (skipped) sub += ` · ${skipped} skipped`;
         F.setStage('decompile', done < total ? 'active' : (succeeded ? 'done' : 'error'), sub);
 
         F.state.progress = {done, total, failed, succeeded};
@@ -142,6 +145,12 @@ ace.config.set('basePath', 'https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.14/')
         pane.querySelector('.decompiler-version').textContent = time ? `${version} · ${time}` : version;
         pane.querySelector('[data-rerun]').hidden = false;
 
+        if (result.skipped) {
+            setStatus(name, 'skipped', 'skipped');
+            pane.querySelector('[data-rerun]').hidden = true;
+            setText(name, `// ${name} skipped: ${result.error}`);
+            return;
+        }
         if (result.error !== null) {
             setStatus(name, 'failed', 'failed');
             setText(name, `// ${name} failed: ${result.error}`);

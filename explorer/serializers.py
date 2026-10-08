@@ -21,8 +21,8 @@ class DecompilationSerializer(WriteOnceMixin, serializers.ModelSerializer):
 
     class Meta:
         model = Decompilation
-        fields = ['id', 'binary', 'created', 'url', 'decompiler', 'error', 'decompiled_file', 'download_url', 'analysis_time']
-        read_only_fields = ['created']
+        fields = ['id', 'binary', 'created', 'url', 'decompiler', 'error', 'skipped', 'decompiled_file', 'download_url', 'analysis_time']
+        read_only_fields = ['created', 'skipped']
         extra_kwargs = {'decompiled_file': {'write_only': True}}
 
     def get_url(self, obj: Decompilation):

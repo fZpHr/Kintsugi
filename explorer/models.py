@@ -166,6 +166,9 @@ class Decompilation(models.Model):
     decompiled_file = models.FileField(upload_to=decompilation_upload_path, max_length=255, null=True)
     decompiler = models.ForeignKey(Decompiler, related_name='decompilations', null=True, on_delete=models.SET_NULL, editable=False)
     error = models.TextField('Error Message', null=True)
+    # The decompiler was not run because it cannot handle this binary; the
+    # reason is in ``error``.
+    skipped = models.BooleanField(default=False)
     created = models.DateTimeField('Decompile Date', default=timezone.now, editable=False)
     analysis_time = models.FloatField(default=0)
 
@@ -262,6 +265,23 @@ class AIAnalysis(models.Model):
         }
 
 
+def queue_decompilation(binary: Binary, decompiler: Decompiler, info=None):
+    """Queue ``binary`` for ``decompiler``, or record it as skipped when the
+    decompiler cannot handle it. ``info`` is ``compatibility.binary_info(binary)``,
+    computed here when not given."""
+    from . import compatibility
+
+    if info is None:
+        info = compatibility.binary_info(binary)
+    reason = compatibility.unsupported_reason(decompiler.name, info)
+    if reason is None:
+        DecompilationRequest.objects.get_or_create(binary=binary, decompiler=decompiler)
+    else:
+        Decompilation.objects.get_or_create(binary=binary, decompiler=decompiler, defaults={
+            'decompiled_file': '', 'error': reason, 'skipped': True,
+        })
+
+
 def rerun_binary_decompilation(binary: Binary, decompiler: Decompiler):
     # Delete any pending requests for the binary+decompiler and add one to the queue
     try:
@@ -276,4 +296,4 @@ def rerun_binary_decompilation(binary: Binary, decompiler: Decompiler):
     except Decompilation.DoesNotExist:
         pass
 
-    DecompilationRequest.objects.create(binary=binary, decompiler=decompiler)
+    queue_decompilation(binary, decompiler)

@@ -18,9 +18,9 @@ from rest_framework.renderers import TemplateHTMLRenderer, JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import ai, ai_jobs
+from . import ai, ai_jobs, compatibility
 from .models import AIAnalysis, Binary, Decompilation, DecompilationRequest, Decompiler, \
-    rerun_binary_decompilation
+    queue_decompilation, rerun_binary_decompilation
 from .serializers import DecompilationRequestSerializer, DecompilationSerializer, BinarySerializer, \
     DecompilerSerializer
 
@@ -133,8 +133,9 @@ class BinaryViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin, mixins.L
 
     def perform_create(self, serializer):
         instance = serializer.save()
+        info = compatibility.binary_info(instance)
         for decompiler in Decompiler.healthy_latest_versions().values():
-            _ = DecompilationRequest.objects.get_or_create(binary=instance, decompiler=decompiler)
+            queue_decompilation(instance, decompiler, info)
 
     @action(methods=['GET'], detail=True)
     def download(self, *args, **kwargs):
@@ -353,7 +354,8 @@ class AITestView(APIView):
 
 def _history_item(binary):
     decompilations = list(binary.decompilations.all())
-    failed = sum(1 for d in decompilations if d.failed)
+    skipped = sum(1 for d in decompilations if d.skipped)
+    failed = sum(1 for d in decompilations if d.failed) - skipped
     try:
         size = binary.file.size
     except (OSError, ValueError):
@@ -365,8 +367,9 @@ def _history_item(binary):
         'name': binary.name,
         'created': binary.created,
         'size': size,
-        'decompiled': len(decompilations) - failed,
+        'decompiled': len(decompilations) - failed - skipped,
         'failed': failed,
+        'skipped': skipped,
         'analysis': None if state is None else {
             'status': state['status'],
             'interpreted': bool(state['interpreted']),
