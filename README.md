@@ -17,9 +17,7 @@
   <img alt="Runs with Docker Compose" src="https://img.shields.io/badge/runs%20with-docker%20compose-3f5ee8">
 </p>
 
-<!-- Add a screenshot of the Analysis tab at docs/screenshot.png, then uncomment:
-<p align="center"><img src="docs/screenshot.png" alt="Kintsugi: the merged decompilation next to its interpretation" width="900"></p>
--->
+<p align="center"><img src="docs/screenshot.jpg" alt="Kintsugi: the merged decompilation next to its interpretation" width="900"></p>
 
 ---
 
@@ -186,7 +184,7 @@ The commercial ones (Binary Ninja, Hex-Rays, dewolf, Relyze) need your own licen
 ## Limitations
 
 - The LLM can still be wrong. The merge is built to be checked: compare a function with the decompiler its `/* from: ... */` line names.
-- Boomerang hangs on some binaries and is then reported as timed out; the merge simply goes without it.
+- Boomerang only handles 32-bit binaries, and hangs on some of them (it is then reported as timed out); the merge simply goes without it.
 - RecStudio runs without the default seccomp profile, which blocks the 32-bit socket calls of its embedded web server (see `docker-compose.yml`).
 - Large binaries make slow decompilers and long prompts: the longest outputs are truncated to `AI_MAX_INPUT_CHARS`.
 

@@ -84,13 +84,18 @@ ace.config.set('basePath', 'https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.14/')
         const failed = Object.values(results).filter((r) => r.error !== null).length;
         const total = names.length;
 
-        document.getElementById('decompilers_badge').textContent = `${done}/${total}`;
-        document.getElementById('decompile_progress').style.width = total ? `${(100 * done) / total}%` : '0';
-        let sub = `${done}/${total} done`;
-        if (failed) sub += ` · ${failed} failed`;
-        F.setStage('decompile', done < total ? 'active' : (done > failed ? 'done' : 'error'), sub);
+        const succeeded = done - failed;
 
-        F.state.progress = {done, total, failed, succeeded: done - failed};
+        // Count successes, not finished runs: "9/9" must mean all of them worked.
+        const badge = document.getElementById('decompilers_badge');
+        badge.textContent = `${succeeded}/${total}`;
+        badge.title = `${succeeded} succeeded, ${failed} failed, ${total - done} pending`;
+        document.getElementById('decompile_progress').style.width = total ? `${(100 * done) / total}%` : '0';
+        let sub = done < total ? `${done}/${total} finished` : `${succeeded}/${total} succeeded`;
+        if (failed) sub += ` · ${failed} failed`;
+        F.setStage('decompile', done < total ? 'active' : (succeeded ? 'done' : 'error'), sub);
+
+        F.state.progress = {done, total, failed, succeeded};
         document.dispatchEvent(new CustomEvent('fusion:progress', {detail: F.state.progress}));
     }
 
