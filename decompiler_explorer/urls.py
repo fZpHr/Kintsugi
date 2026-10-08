@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 
 from rest_framework import routers
-from rest_framework.renderers import JSONRenderer, BrowsableAPIRenderer
+from rest_framework.renderers import JSONRenderer
 
 from explorer import views
 
@@ -34,7 +34,10 @@ urlpatterns = [
     path('', include('explorer.urls')),
     path('api/', include(router.urls)),
     path('admin/', admin.site.urls),
-    path('api/queue', views.QueueView.as_view(renderer_classes=[JSONRenderer, BrowsableAPIRenderer]))
+    path('api/queue', views.QueueView.as_view(renderer_classes=[JSONRenderer])),
+    path('api/history', views.HistoryView.as_view()),
+    path('api/history/<uuid:binary_id>', views.HistoryView.as_view()),
+    path('api/ai/test', views.AITestView.as_view()),
 ]
 
 

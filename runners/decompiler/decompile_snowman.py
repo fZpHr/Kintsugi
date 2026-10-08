@@ -19,7 +19,7 @@ def main():
     decomp = subprocess.run([SNOWMAN_NOCODE, infile.name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
     if decomp.returncode != 0:
         print(f'{decomp.stdout.decode()}\n{decomp.stderr.decode()}')
-        return
+        sys.exit(1)
     infile.close()
 
     sys.stdout.buffer.write(decomp.stdout)

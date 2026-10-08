@@ -1,140 +1,200 @@
-{% load rest_framework %}
+{% extends "explorer/base.html" %}
 {% load static %}
-<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Decompiler Explorer</title>
-        <meta name="description" content="Decompiler Explorer is an interactive online decompiler which shows equivalent C-like output of decompiled programs from many popular decompilers.">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 
-        <meta property="og:type" content="website">
-        <meta property="og:url" content="https://dogbolt.org">
-        <meta property="og:site_name" content="Decompiler Explorer">
-        <meta property="og:title" content="Decompiler Explorer">
-        <meta property="og:description" content="Decompiler Explorer is an interactive online decompiler which shows equivalent C-like output of decompiled programs from many popular decompilers.">
-        <meta property="og:image" content="{% static 'img/dogbolt.png' %}">
+{% block head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.14/ace.min.js" charset="utf-8"></script>
+{{ decompilers_json|json_script:"decompilers_json" }}
+{% endblock %}
 
-        <meta name="twitter:card" content="summary">
-        <meta name="twitter:site" content="@dogboltorg">
-        <meta name="twitter:creator" content="@dogboltorg">
-        <meta name="twitter:title" content="Decompiler Explorer">
-        <meta name="twitter:description" content="Decompiler Explorer is an interactive online decompiler which shows equivalent C-like output of decompiled programs from many popular decompilers.">
-        <meta property="twitter:image" content="{% static 'img/dogbolt.png' %}">
+{% block topbar %}
+<div class="binary-info" id="binary_info" hidden>
+    <i class="fas fa-file-code"></i>
+    <span class="binary-name" id="binary_name"></span>
+    <span class="binary-meta" id="binary_meta"></span>
+</div>
+{% endblock %}
 
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+{% block topbar_actions %}
+<label class="btn btn-primary btn-sm" for="file" id="new_binary" hidden><i class="fas fa-upload"></i><span>New analysis</span></label>
+{% endblock %}
 
-        <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
-        <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
-        <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
-        <link rel="manifest" href="/static/site.webmanifest">
+{% block content %}
+<input type="file" id="file" name="file" class="visually-hidden">
 
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
-        <link rel="stylesheet" href="{% static 'css/style.css' %}" />
+<main class="home" id="hero">
+    <section class="home-intro">
+        <h1>Analyze a binary</h1>
+        <p>
+            Runs {{ decompilers|length }} decompilers on the same executable, merges their output into a single
+            listing, then produces an annotated interpretation of it.
+        </p>
+    </section>
 
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.14/ace.min.js" type="text/javascript" charset="utf-8"></script>
+    <label class="dropzone" id="dropzone" for="file">
+        <i class="fas fa-arrow-up-from-bracket"></i>
+        <span><strong>Drop an executable here</strong> or <span class="link">browse</span></span>
+        <small>ELF, PE or Mach-O &middot; small executables work best (up to 2&nbsp;MB)</small>
+    </label>
 
-        {% csrf_token %}
+    <div class="notice" id="ai_notice" hidden>
+        <i class="fas fa-circle-info"></i>
+        <span>The merge and the interpretation need an AI provider.</span>
+        <button type="button" class="link-btn" data-open-settings>Add an API key</button>
+    </div>
 
-        {{ decompilers_json|json_script:"decompilers_json" }}
-    </head>
-<body>
-<div class="d-flex flex-column h-100" id="main">
-    <header>
-        <div class="container my-3">
-            <div class="row align-items-center">
-                <div class="col-md-9">
-                    <a class="page-title" href="{% url 'explorer:index' %}">
-                        <img alt="Dogbolt Logo" src="/static/img/dogbolt-small.png">
-                        <h1 class="my-0">Decompiler Explorer</h1>
-                    </a>
-                </div>
-                <div class="col-md-3">
-                    <a href="{% url 'explorer:faq' %}" class="float-end">What is this?</a>
-                </div>
-            </div>
-        </div>
-    </header>
-    {% if show_banner %}
-    <section id="banner" class="container-fluid mb-5 text-light bg-dark">
-        <div class="row py-2 px-4">
-            <span>
-                Welcome visitors! We are experiencing a lot of load, sorry if the service is unavailable when you stop by. In the meantime, check out one of the already generated results in the "Samples" section, or
-                <a id="queue-url" href="{% url 'explorer:queue' %}" title="View queue details">
-                    check the queue to see the wait time.
-                </a>
-            </span>
-        </div>
+    <p class="engines">
+        <span class="engines-label">Decompilers</span>
+        {% for d in decompilers %}<span class="engine">{{ d.name }} <small>{{ d.version }}</small></span>{% empty %}<span class="engine engine-off">None online yet</span>{% endfor %}
+    </p>
+
+    {% if history_enabled %}
+    <section class="card">
+        <header class="card-head">
+            <h2>Recent analyses</h2>
+            <a href="{% url 'explorer:history' %}">View all</a>
+        </header>
+        <div class="history" data-history data-limit="6"></div>
     </section>
     {% endif %}
-    <section id="input" class="container">
-        <div class="row my-3">
-            <div class="col-md-6">
-                <h3>Upload File</h3>
-                <p>Your file must be <strong>less than 2MB</strong> in size. Uploaded binaries <a href="{% url 'explorer:faq' %}#">are retained</a>.
-                </p>
-                <form class="input-group" id="binary_upload_form">
-                    <input type="file" class="form-control form-control-sm input-group-append" id="file" name="file" value required>
-                </form>
+</main>
+
+<main class="workspace" id="workspace" hidden>
+    <section class="pipeline">
+        <div class="stage" id="stage_upload">
+            <span class="stage-icon"><i class="fas fa-file-arrow-up"></i></span>
+            <div class="stage-body">
+                <div class="stage-name">Upload</div>
+                <div class="stage-sub" id="stage_upload_sub">&ndash;</div>
             </div>
-            <div class="col-md-6"
-            {% if featured_binaries|length == 0 %}
-                style="display:none"
-            {% endif %}
-            >
-                <h3>Samples</h3>
-                <p>Or check out one of these samples we've provided:</p>
-                <form class="input-group" id="sample_form">
-                    <select name="samples" id="samples" class="form-select form-select-sm input-group-append">
-                        <option value="">Select a Sample...</option>
-                        {% for b in featured_binaries %}
-                        <option value="{{ b.id }}">{{ b.featured_name }}</option>
-                        {% endfor %}
-                    </select>
-                </form>
+        </div>
+        <div class="stage-link"></div>
+        <div class="stage" id="stage_decompile">
+            <span class="stage-icon"><i class="fas fa-microchip"></i></span>
+            <div class="stage-body">
+                <div class="stage-name">Decompile</div>
+                <div class="stage-sub" id="stage_decompile_sub">&ndash;</div>
+                <div class="progress"><div class="progress-bar" id="decompile_progress"></div></div>
             </div>
+        </div>
+        <div class="stage-link"></div>
+        <div class="stage" id="stage_merge">
+            <span class="stage-icon"><i class="fas fa-code-merge"></i></span>
+            <div class="stage-body">
+                <div class="stage-name">Merge</div>
+                <div class="stage-sub" id="stage_merge_sub">&ndash;</div>
+            </div>
+        </div>
+        <div class="stage-link"></div>
+        <div class="stage" id="stage_interpret">
+            <span class="stage-icon"><i class="fas fa-pen-nib"></i></span>
+            <div class="stage-body">
+                <div class="stage-name">Interpret</div>
+                <div class="stage-sub" id="stage_interpret_sub">&ndash;</div>
+            </div>
+        </div>
+        <div class="pipeline-actions">
+            <label class="switch" title="Run the merge and the interpretation once every decompiler has finished">
+                <input type="checkbox" id="ai_autorun"><span class="switch-track"></span>Auto-run
+            </label>
+            <button type="button" class="btn btn-primary" id="ai_generate">
+                <i class="fas fa-play"></i><span id="ai_generate_label">Run analysis</span>
+            </button>
         </div>
     </section>
-    <section id="decompilers" class="container flex-grow-1 d-flex flex-column">
-        <div class="row" id="decompiler_selectors">
-            {% for d in decompilers %}
-            <div class="col-xl col-lg-2 col-md-3 col-sm-4">
-                <label class="decompiler_selector" for="select_{{ d.name }}">
-                    <input type="checkbox" class="decompiler_select" id="select_{{ d.name }}">
-                    {{ d.name }}
-                </label>
+
+    <nav class="tabs" id="main_tabs">
+        <button type="button" class="tab" data-tab="ai">Analysis</button>
+        <button type="button" class="tab" data-tab="decompilers">Decompilers <span class="tab-badge" id="decompilers_badge">0/{{ decompilers|length }}</span></button>
+    </nav>
+
+    <section class="tab-panel" id="tab_ai" data-tab-panel="ai">
+        <div class="card insights" id="ai_insights" hidden>
+            <header class="card-head">
+                <h2>Summary</h2>
+                <span class="card-meta" id="ai_meta"></span>
+            </header>
+            <pre class="insights-summary" id="ai_summary" hidden></pre>
+            <button type="button" class="link-btn" id="ai_summary_toggle" hidden></button>
+            <div class="insights-row" id="ai_provenance_row" hidden>
+                <span class="insights-label">Sources per function</span>
+                <div class="chips" id="ai_provenance"></div>
             </div>
+            <div class="insights-row" id="ai_notes_row" hidden>
+                <span class="insights-label">Disagreements</span>
+                <div class="chips" id="ai_notes"></div>
+            </div>
+        </div>
+
+        <div class="ai-grid">
+            <article class="pane" id="pane_merge">
+                <header class="pane-head">
+                    <div class="pane-title">
+                        <h2>Merged decompilation</h2>
+                        <p>Built only from the decompiler outputs</p>
+                    </div>
+                    <div class="pane-tools">
+                        <button type="button" class="icon-btn" data-copy="ai_best" title="Copy"><i class="fas fa-copy"></i></button>
+                        <button type="button" class="icon-btn" data-download="ai_best" data-suffix="merged" title="Download .c"><i class="fas fa-download"></i></button>
+                    </div>
+                </header>
+                <div class="editor-wrap">
+                    <div class="editor" id="ai_best"></div>
+                    <div class="editor-overlay" id="overlay_merge"></div>
+                </div>
+            </article>
+            <article class="pane" id="pane_interpret">
+                <header class="pane-head">
+                    <div class="pane-title">
+                        <h2>Interpretation</h2>
+                        <p>The merge, renamed and annotated</p>
+                    </div>
+                    <div class="pane-tools">
+                        <button type="button" class="icon-btn" data-copy="ai_interpreted" title="Copy"><i class="fas fa-copy"></i></button>
+                        <button type="button" class="icon-btn" data-download="ai_interpreted" data-suffix="interpreted" title="Download .c"><i class="fas fa-download"></i></button>
+                    </div>
+                </header>
+                <div class="editor-wrap">
+                    <div class="editor" id="ai_interpreted"></div>
+                    <div class="editor-overlay" id="overlay_interpret"></div>
+                </div>
+            </article>
+        </div>
+    </section>
+
+    <section class="tab-panel" id="tab_decompilers" data-tab-panel="decompilers" hidden>
+        <div class="chips" id="decompiler_selectors">
+            {% for d in decompilers %}
+            <button type="button" class="dchip" data-decompiler="{{ d.name }}" title="Show / hide {{ d.name }}">
+                <span class="dot"></span>{{ d.name }}<span class="dchip-time"></span>
+            </button>
             {% endfor %}
         </div>
-        <div class="row my-3 flex-grow-1" id="decompilers">
+        <div class="decompilers-grid">
             {% for d in decompilers %}
-            <div class="col d-flex flex-column decompiler decompiler_container" id="container_{{ d.name }}">
-                <div class="row">
-                    <h5 class="d-inline-block">
-                        <a class="decompiler_title" data-umami-event="url_{{ d.name }}" id="title_{{ d.name }}" title="Website for {{ d.name }}" target="_blank" href="{{ d.url }}">{{ d.name }}</a>
-                        <a class="decompiler_rerun" id="rerun_{{ d.name }}" title="Re-run decompilation" hidden><i class='fas fa-redo'></i></a>
-                    </h5>
-                    <div class="decompiler_version" id="version_{{ d.name }}"></div>
+            <article class="pane decompiler-pane" data-decompiler="{{ d.name }}">
+                <header class="pane-head">
+                    <div class="pane-title">
+                        <h2><span class="dot"></span><a href="{{ d.url }}" target="_blank" rel="noopener" title="Website for {{ d.name }}">{{ d.name }}</a></h2>
+                        <p class="decompiler-version">{{ d.version }}</p>
+                    </div>
+                    <div class="pane-tools">
+                        <button type="button" class="icon-btn" data-rerun title="Re-run decompilation" hidden><i class="fas fa-rotate-right"></i></button>
+                        <button type="button" class="icon-btn" data-copy="{{ d.name }}" title="Copy"><i class="fas fa-copy"></i></button>
+                    </div>
+                </header>
+                <div class="editor-wrap">
+                    <div class="editor" id="{{ d.name }}"></div>
                 </div>
-                <div class="row flex-grow-1">
-                    <div id="{{d.name}}" class="decompiler_output"></div>
-                </div>
-            </div>
+            </article>
             {% endfor %}
         </div>
     </section>
-    <footer>
-        <div class="container">
-            <div class="row justify-content-between text-center my-2">
-                <p class="mb-0 small">Decompiler Explorer is open source! Fork it on <a href="https://github.com/decompiler-explorer/decompiler-explorer">GitHub</a>!</p>
-            </div>
-        </div>
-    </footer>
-</div>
+</main>
+<div class="drop-overlay" aria-hidden="true"><div><i class="fas fa-arrow-up-from-bracket"></i>Drop to analyze</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/history.js' %}"></script>
 <script src="{% static 'js/index.js' %}"></script>
-<script async defer data-website-id="e8f5e886-a15e-4aca-9e17-4ebed158a438" src="https://stats.ext.v35.us/yummi.js"></script>
-</body>
-</html>
+<script src="{% static 'js/ai.js' %}"></script>
+{% endblock %}

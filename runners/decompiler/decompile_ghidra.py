@@ -44,7 +44,7 @@ def main():
         decomp = subprocess.run(decompile_command, capture_output=True, env=env, cwd=cwd)
         if decomp.returncode != 0 or not output_file.exists():
             print(f'{decomp.stdout.decode()}\n{decomp.stderr.decode()}')
-            return
+            sys.exit(1)
 
     with open(output_file, 'r') as f:
         print(f.read())

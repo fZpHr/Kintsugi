@@ -1,0 +1,113 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Kintsugi{% endblock %}</title>
+    <meta name="description" content="Kintsugi runs Ghidra, angr, RetDec, Reko, Snowman, rev.ng and other decompilers on the same binary, merges their output into one listing with an LLM, and annotates it.">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="{% static 'img/logo.svg' %}">
+
+    <script>
+        // Apply the saved (or system) theme before the first paint.
+        try {
+            const saved = JSON.parse(localStorage.getItem('fusion:theme'));
+            const light = window.matchMedia('(prefers-color-scheme: light)').matches;
+            document.documentElement.dataset.theme = saved || (light ? 'light' : 'dark');
+        } catch (e) {}
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    {{ fusion_config|json_script:"fusion_config" }}
+    {% block head %}{% endblock %}
+</head>
+<body>
+{% csrf_token %}
+<div class="app">
+    <header class="topbar">
+        <a class="brand" href="{% url 'explorer:index' %}">
+            <img src="{% static 'img/logo.svg' %}" alt="" width="26" height="26">
+            <span>Kintsugi</span>
+        </a>
+        {% url 'explorer:index' as index_url %}{% url 'explorer:history' as history_url %}{% url 'explorer:queue' as queue_url %}
+        <nav class="nav">
+            <a class="nav-link{% if request.path == index_url %} active{% endif %}" href="{{ index_url }}">Analyze</a>
+            {% if history_enabled %}
+            <a class="nav-link{% if request.path == history_url %} active{% endif %}" href="{{ history_url }}">History</a>
+            {% endif %}
+            <a class="nav-link{% if request.path == queue_url %} active{% endif %}" href="{{ queue_url }}">Queue</a>
+        </nav>
+        {% block topbar %}{% endblock %}
+        <div class="topbar-actions">
+            {% block topbar_actions %}{% endblock %}
+            <button type="button" class="icon-btn" id="settings_open" title="Settings"><i class="fas fa-gear"></i></button>
+            <button type="button" class="icon-btn" id="theme_toggle" title="Toggle light / dark theme"><i class="fas fa-circle-half-stroke"></i></button>
+        </div>
+    </header>
+
+    {% block content %}{% endblock %}
+
+    <footer class="footer">
+        Based on <a href="https://github.com/decompiler-explorer/decompiler-explorer" target="_blank" rel="noopener">Decompiler Explorer</a>
+        by Vector 35 (MIT license). Not affiliated with dogbolt.org.
+    </footer>
+</div>
+
+<dialog class="dialog" id="settings_dialog">
+    <form method="dialog" id="settings_form">
+        <header class="dialog-head">
+            <h2>Settings</h2>
+            <button type="button" class="icon-btn" data-close title="Close"><i class="fas fa-xmark"></i></button>
+        </header>
+        <div class="dialog-body">
+            <h3>AI provider</h3>
+            <p class="dialog-lead">Used to merge the decompiler outputs and interpret the result.</p>
+
+            <label class="field">
+                <span class="field-label">Provider</span>
+                <select id="ai_provider"></select>
+            </label>
+            <p class="field-note" id="ai_provider_note"></p>
+
+            <div id="ai_key_fields">
+                <label class="field">
+                    <span class="field-label">API key</span>
+                    <span class="input-group">
+                        <input type="password" id="ai_api_key" autocomplete="off" spellcheck="false" placeholder="Paste your API key">
+                        <button type="button" class="icon-btn" id="ai_api_key_toggle" title="Show / hide the key"><i class="fas fa-eye"></i></button>
+                    </span>
+                </label>
+                <label class="field">
+                    <span class="field-label">Model</span>
+                    <input type="text" id="ai_model" autocomplete="off" spellcheck="false">
+                </label>
+                <label class="field" id="ai_base_url_field">
+                    <span class="field-label">Base URL</span>
+                    <input type="url" id="ai_base_url" autocomplete="off" spellcheck="false">
+                </label>
+                <p class="field-note">The key is stored in this browser only, and sent to this server with each analysis request.</p>
+            </div>
+
+            <div class="test-row">
+                <button type="button" class="btn" id="ai_test"><i class="fas fa-plug"></i> Test connection</button>
+                <span class="test-result" id="ai_test_result"></span>
+            </div>
+        </div>
+        <footer class="dialog-foot">
+            <button type="button" class="btn btn-ghost" id="settings_clear">Remove saved key</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn" data-close>Cancel</button>
+            <button type="submit" class="btn btn-primary" id="settings_save">Save</button>
+        </footer>
+    </form>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="{% static 'js/common.js' %}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -21,7 +21,7 @@ def main():
     decomp = subprocess.run([sys.executable, str(IDA_BATCH_PY), "--idadir", str(IDA_INSTALL), infile.name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
     if decomp.returncode != 0 or not Path(output).exists():
         print(f'{decomp.stdout.decode()}\n{decomp.stderr.decode()}')
-        return
+        sys.exit(1)
     infile.close()
 
     with open(output, 'rb') as f:

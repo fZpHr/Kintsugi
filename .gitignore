@@ -9,3 +9,4 @@ letsencrypt
 media
 staticfiles
 __pycache__
+.env

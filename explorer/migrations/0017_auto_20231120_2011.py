@@ -14,9 +14,17 @@ class Migration(migrations.Migration):
             model_name='decompilation',
             name='request',
         ),
-        migrations.AlterIndexTogether(
-            name='decompilationrequest',
-            index_together=set(),
+        # State-only removal: the composed index was never created at the DB
+        # level (see migration 0015), so there is nothing to drop here. Keeping
+        # the state operation keeps migration state consistent with the model.
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AlterIndexTogether(
+                    name='decompilationrequest',
+                    index_together=set(),
+                ),
+            ],
+            database_operations=[],
         ),
         migrations.RemoveField(
             model_name='decompilationrequest',

@@ -1,0 +1,29 @@
+{% extends "explorer/base.html" %}
+{% load static %}
+
+{% block title %}History &middot; Kintsugi{% endblock %}
+
+{% block content %}
+<main class="page">
+    <header class="page-head">
+        <div>
+            <h1 class="page-title">History</h1>
+            <p class="page-lead">Every binary analysed on this server, newest first.</p>
+        </div>
+        {% if history_enabled %}
+        <input type="search" class="search" id="history_filter" placeholder="Filter by name or ID" autocomplete="off">
+        {% endif %}
+    </header>
+    {% if history_enabled %}
+    <section class="card">
+        <div class="history" data-history data-limit="1000" data-deletable data-filter="history_filter"></div>
+    </section>
+    {% else %}
+    <p class="empty">The history is disabled on this server.</p>
+    {% endif %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/history.js' %}"></script>
+{% endblock %}

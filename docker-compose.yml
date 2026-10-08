@@ -1,77 +1,36 @@
-version: '3.8'
+# Lean LOCAL stack - plain `docker compose up`, no Swarm / Traefik / ACME / S3.
+#
+#   1. One-time: generate ./secrets/* (skips the ones that already exist)
+#        mkdir -p secrets && for s in db_superuser_pass worker_auth_token; do
+#          [ -f secrets/$s ] || openssl rand -hex 32 | tr -d '\n' > secrets/$s; done
+#   2. docker compose up -d --build
+#      -> http://localhost:8000
+#
+# Includes only the license-free decompilers. The AI analysis uses the key set
+# in the browser (Settings), or else the server's key from ./.env (see
+# .env.example).
 
-
-x-decompiler:
-    &default-decompiler-options
-        init: true
-        environment:
-            - SERVER=${EXPLORER_URL:-http://explorer:8000}
-            - DEBUG=${DEBUG:-0}
-        networks:
-            - backend_net
-        command: [
-            "--timeout", "${DECOMPILER_TIMEOUT:-120}",
-            "--extended-timeout", "${DECOMPILER_EXTENDED_TIMEOUT:-900}",
-            "--mem-limit-hard", "${DECOMPILER_MEM_LIMIT_HARD:-10000000000}",
-            "--mem-limit-soft", "${DECOMPILER_MEM_LIMIT_SOFT:-10000000000}"
-            ]
-        secrets:
-            - worker_auth_token
-        deploy:
-            replicas: 1
-        logging:
-            driver: json-file
-            options:
-                max-file: 5
-                max-size: 50m
-
+x-decompiler: &decompiler
+    init: true
+    environment:
+        - SERVER=${EXPLORER_URL:-http://explorer:8000}
+        - DEBUG=${DEBUG:-0}
+    command: [
+        "--timeout", "${DECOMPILER_TIMEOUT:-120}",
+        "--extended-timeout", "${DECOMPILER_EXTENDED_TIMEOUT:-900}",
+        "--mem-limit-hard", "${DECOMPILER_MEM_LIMIT_HARD:-10000000000}",
+        "--mem-limit-soft", "${DECOMPILER_MEM_LIMIT_SOFT:-10000000000}"
+    ]
+    secrets:
+        - worker_auth_token
+    restart: unless-stopped
+    logging:
+        driver: json-file
+        options:
+            max-file: "5"
+            max-size: 50m
 
 services:
-    traefik:
-        image: traefik:v3.6
-        init: true
-        networks:
-            - backend_net
-            - default
-        volumes:
-            - "/var/run/docker.sock:/var/run/docker.sock:ro"
-        ports:
-            - target: 80
-              published: 80
-              mode: host
-              protocol: tcp
-            - target: 443
-              published: 443
-              mode: host
-              protocol: tcp
-            - "8080:8080"
-        command:
-            - --providers.swarm=true
-            - --providers.swarm.watch=true
-            - --providers.swarm.exposedbydefault=false
-            - --entrypoints.web.address=:80
-            - --entrypoints.websecure.address=:443
-            - --entrypoints.web.http.redirections.entryPoint.to=websecure
-            - --entrypoints.web.http.redirections.entryPoint.scheme=https
-            - --entrypoints.web.http.redirections.entrypoint.permanent=true
-            - --accesslog
-            - --log
-            - --api
-            - --api.insecure=true
-            - --api.dashboard=true
-        deploy:
-            replicas: 1
-            placement:
-                constraints:
-                    - "node.role==manager"
-            labels:
-                - traefik.enable=true
-                - traefik.http.services.traefik.loadbalancer.server.port=8080
-                - traefik.http.middlewares.https-redirect.redirectscheme.scheme=https
-                - traefik.http.middlewares.https-redirect.redirectscheme.permanent=true
-                - traefik.http.middlewares.limit.buffering.maxRequestBodyBytes=${MAX_REQUEST_SIZE:-2000000}
-                - traefik.http.middlewares.limit.buffering.memRequestBodyBytes=2000000
-
     database:
         image: postgres:14
         environment:
@@ -81,172 +40,143 @@ services:
             - db_superuser_pass
         healthcheck:
             test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+            interval: 5s
+            timeout: 5s
+            retries: 10
         volumes:
             - ./db_data:/var/lib/postgresql/data/
-        networks:
-            - backend_net
-        deploy:
-            replicas: 1
-            placement:
-                constraints:
-                    - "node.role==manager"
+        restart: unless-stopped
 
     memcached:
         image: memcached:1.6
-        networks:
-            - backend_net
-        deploy:
-            replicas: 1
-            placement:
-                constraints:
-                    - "node.role==manager"
+        restart: unless-stopped
 
     explorer:
         depends_on:
-            - database
-            - memcached
+            database:
+                condition: service_healthy
+            memcached:
+                condition: service_started
         init: true
         build: .
         image: ${IMAGE_NAME:-decompiler_explorer}:explorer
+        # Run as root (like the decompiler workers) so the container can read
+        # the host-owned compose secrets without any chmod on the host.
+        # HOME is kept on the pipenv virtualenv's location so `pipenv run` still
+        # finds it when the user is root instead of backend_user.
+        user: root
+        ports:
+            - "${EXPLORER_PORT:-8000}:8000"
         environment:
             - PYTHONUNBUFFERED=1
+            - HOME=/home/backend_user
             - DJANGO_SETTINGS_MODULE=decompiler_explorer.settings.docker
             - DEBUG=${DEBUG:-0}
-        networks:
-            - backend_net
+            # AI analysis, read from ./.env. Empty values fall back to the
+            # defaults in decompiler_explorer/settings/base.py.
+            - AI_PROVIDER=${AI_PROVIDER:-}
+            - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+            - GEMINI_MODEL=${GEMINI_MODEL:-}
+            - GEMINI_FALLBACK_MODELS=${GEMINI_FALLBACK_MODELS:-}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+            - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-${AI_MODEL:-}}
+            - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+            - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+            - OPENAI_MODEL=${OPENAI_MODEL:-}
+            - AI_ALLOW_BROWSER_KEYS=${AI_ALLOW_BROWSER_KEYS:-1}
+            - AI_ALLOW_CUSTOM_BASE_URL=${AI_ALLOW_CUSTOM_BASE_URL:-1}
+            - AI_MAX_TOKENS=${AI_MAX_TOKENS:-}
+            - AI_MAX_INPUT_CHARS=${AI_MAX_INPUT_CHARS:-}
+            - HISTORY_ENABLED=${HISTORY_ENABLED:-1}
+            # An AI synthesis can take minutes; gunicorn's default 30s worker
+            # timeout would kill the request mid-way.
+            - GUNICORN_CMD_ARGS=--timeout ${GUNICORN_TIMEOUT:-600}
+        volumes:
+            # Persist uploaded binaries AND decompiler outputs on the host so
+            # they survive `up --build` / container recreates (otherwise they
+            # live only in the container's ephemeral layer and are lost on
+            # rebuild, leaving DB rows pointing at missing files).
+            - ./media:/opt/decompiler_explorer/media
         secrets:
             - db_superuser_pass
             - worker_auth_token
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:8000"]
-        deploy:
-            replicas: 1
-            placement:
-                constraints:
-                    - "node.role==manager"
-            labels:
-                - traefik.enable=true
-                - traefik.http.services.explorer.loadbalancer.server.port=8000
-                - traefik.http.routers.explorer.rule=Host(`${DOMAIN:-dce.localhost}`)
-                - traefik.http.routers.explorer.entrypoints=websecure
-                - traefik.http.routers.explorer.tls=true
-                - traefik.http.routers.explorer.middlewares=limit@swarm
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        restart: unless-stopped
 
-
-    # Decompilers
-    binja:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:binja
-        build:
-            context: runners/decompiler
-            target: binja
-
-    ghidra:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:ghidra
-        build:
-            context: runners/decompiler
-            target: ghidra
-
+    # --- License-free decompilers ---------------------------------------------
     angr:
-        <<: *default-decompiler-options
+        <<: *decompiler
         image: ${IMAGE_NAME:-decompiler_explorer}:angr
-        build:
-            context: runners/decompiler
-            target: angr
-
-    snowman:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:snowman
-        build:
-            context: runners/decompiler
-            target: snowman
-
-    retdec:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:retdec
-        build:
-            context: runners/decompiler
-            target: retdec
-        command: [
-            "--timeout", "${DECOMPILER_TIMEOUT:-120}",
-            "--extended-timeout", "${DECOMPILER_EXTENDED_TIMEOUT:-900}",
-            # Do not specify hard limit #12
-            "--mem-limit-soft", "${DECOMPILER_MEM_LIMIT_SOFT:-10000000000}"
-            ]
-
-    recstudio:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:recstudio
-        build:
-            context: runners/decompiler
-            target: recstudio
+        build: {context: runners/decompiler, target: angr}
 
     boomerang:
-        <<: *default-decompiler-options
+        <<: *decompiler
         image: ${IMAGE_NAME:-decompiler_explorer}:boomerang
-        build:
-            context: runners/decompiler
-            target: boomerang
+        build: {context: runners/decompiler, target: boomerang}
+
+    ghidra:
+        <<: *decompiler
+        image: ${IMAGE_NAME:-decompiler_explorer}:ghidra
+        build: {context: runners/decompiler, target: ghidra}
+
+    kuna:
+        <<: *decompiler
+        image: ${IMAGE_NAME:-decompiler_explorer}:kuna
+        build: {context: runners/decompiler, target: kuna}
+
+    recstudio:
+        <<: *decompiler
+        image: ${IMAGE_NAME:-decompiler_explorer}:recstudio
+        build: {context: runners/decompiler, target: recstudio}
+        # RecCLI is a 32-bit binary that starts an embedded web server; the
+        # default seccomp profile (at least under rootless Docker) blocks the
+        # 32-bit socket syscalls it uses, so it aborts with "CivetException:
+        # null context when constructing CivetServer" before decompiling.
+        security_opt:
+            - seccomp=unconfined
 
     reko:
-        <<: *default-decompiler-options
+        <<: *decompiler
         image: ${IMAGE_NAME:-decompiler_explorer}:reko
-        build:
-            context: runners/decompiler
-            target: reko
-        deploy:
-            resources:
-                limits:
-                    memory: ${DECOMPILER_MEM_LIMIT_HARD:-10g}
+        build: {context: runners/decompiler, target: reko}
+        mem_limit: ${DECOMPILER_MEM_LIMIT_HARD:-10g}
+        command: [
+            "--timeout", "${DECOMPILER_TIMEOUT:-120}",
+            "--extended-timeout", "${DECOMPILER_EXTENDED_TIMEOUT:-900}"
+        ]
+
+    retdec:
+        <<: *decompiler
+        image: ${IMAGE_NAME:-decompiler_explorer}:retdec
+        build: {context: runners/decompiler, target: retdec}
         command: [
             "--timeout", "${DECOMPILER_TIMEOUT:-120}",
             "--extended-timeout", "${DECOMPILER_EXTENDED_TIMEOUT:-900}",
-            # Reko is ornery and doesn't handle resource limits
-            # via python RLIMIT_AS, so use deploy limits
+            "--mem-limit-soft", "${DECOMPILER_MEM_LIMIT_SOFT:-10000000000}"
         ]
 
-    hexrays:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:hexrays
-        build:
-            context: runners/decompiler
-            target: hexrays
-
-    dewolf:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:dewolf
-        build:
-            context: runners/decompiler
-            target: dewolf
-
-    relyze:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:relyze
-        build:
-            context: runners/decompiler
-            target: relyze
-
     revng:
-        <<: *default-decompiler-options
+        <<: *decompiler
         image: ${IMAGE_NAME:-decompiler_explorer}:revng
-        build:
-            context: runners/decompiler
-            target: revng
+        build: {context: runners/decompiler, target: revng}
 
-    kuna:
-        <<: *default-decompiler-options
-        image: ${IMAGE_NAME:-decompiler_explorer}:kuna
-        build:
-            context: runners/decompiler
-            target: kuna
+    snowman:
+        <<: *decompiler
+        image: ${IMAGE_NAME:-decompiler_explorer}:snowman
+        build: {context: runners/decompiler, target: snowman}
 
-networks:
-    backend_net:
-
-volumes:
-    staticfiles:
-    mediafiles:
+    # --- Hex-Rays / IDA (commercial, needs YOUR purchased IDA 9.4 license) ----
+    # Uncomment once you have copied your IDA 9.4 install + registry into
+    # runners/decompiler/tools/hexrays/ (see steps in the chat / README), then:
+    #   docker compose up -d --build hexrays
+    # hexrays:
+    #     <<: *decompiler
+    #     image: ${IMAGE_NAME:-decompiler_explorer}:hexrays
+    #     build: {context: runners/decompiler, target: hexrays}
 
 secrets:
     db_superuser_pass:

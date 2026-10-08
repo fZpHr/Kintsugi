@@ -32,6 +32,8 @@ class Binary(models.Model):
     file = models.FileField(upload_to=binary_upload_path, max_length=255)
     created = models.DateTimeField('Compile Date', default=timezone.now, editable=False)
     hash = models.CharField(max_length=128, editable=False, unique=True, blank=False, null=False)
+    # File name it was first uploaded with, shown in the history.
+    name = models.CharField('Original file name', max_length=255, blank=True, default='')
     featured = models.BooleanField(default=False)
     featured_name = models.TextField(max_length=128, null=True)
 
@@ -188,6 +190,76 @@ class Decompilation(models.Model):
     @property
     def failed(self) -> bool:
         return self.error is not None or self.decompiled_file is None
+
+
+class AIAnalysis(models.Model):
+    """Latest AI synthesis of a binary: the merge of its decompiler outputs,
+    then the interpretation of that merge. It runs as a background job on the
+    server (see ``explorer.ai_jobs``), whose progress is tracked here."""
+    MERGING = 'merging'
+    INTERPRETING = 'interpreting'
+    DONE = 'done'
+    FAILED = 'failed'
+    STATUSES = [(MERGING, 'Merging'), (INTERPRETING, 'Interpreting'), (DONE, 'Done'), (FAILED, 'Failed')]
+    RUNNING = (MERGING, INTERPRETING)
+
+    binary = models.OneToOneField(Binary, related_name='ai_analysis', on_delete=models.CASCADE,
+                                  primary_key=True)
+    status = models.CharField(max_length=16, choices=STATUSES, default=MERGING)
+    # When the step in progress started, to show its elapsed time.
+    step_started = models.DateTimeField(null=True)
+    error = models.TextField(blank=True, default='')
+    merged = models.TextField(blank=True, default='')
+    merge_model = models.CharField(max_length=255, blank=True, default='')
+    merge_time = models.FloatField(null=True)
+    # Names of the decompilers whose outputs were merged.
+    decompilers = models.JSONField(default=list)
+    interpreted = models.TextField(blank=True, default='')
+    interpret_model = models.CharField(max_length=255, blank=True, default='')
+    interpret_time = models.FloatField(null=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'AI analysis'
+        verbose_name_plural = 'AI analyses'
+
+    def __str__(self):
+        return f'<AI analysis: {self.binary_id}>'
+
+    @property
+    def interrupted(self):
+        """Still marked as running, but for longer than a step can last: the
+        job died with its server process."""
+        if self.status not in self.RUNNING or self.step_started is None:
+            return False
+        max_step = timedelta(seconds=settings.AI_REQUEST_TIMEOUT + 120)
+        return timezone.now() - self.step_started > max_step
+
+    @property
+    def running(self):
+        return self.status in self.RUNNING and not self.interrupted
+
+    def as_dict(self):
+        status, error = self.status, self.error
+        if self.interrupted:
+            status = self.FAILED
+            error = "The analysis was interrupted (the server restarted?). Run it again."
+        step_elapsed = None
+        if status in self.RUNNING and self.step_started is not None:
+            step_elapsed = (timezone.now() - self.step_started).total_seconds()
+        models_used = [m for m in (self.merge_model, self.interpret_model) if m]
+        return {
+            'status': status,
+            'error': error,
+            'step_elapsed': step_elapsed,
+            'best': self.merged,
+            'interpreted': self.interpreted,
+            'model': ' + '.join(dict.fromkeys(models_used)),
+            'decompilers': self.decompilers,
+            'merge_time': self.merge_time,
+            'interpret_time': self.interpret_time,
+            'updated': self.updated,
+        }
 
 
 def rerun_binary_decompilation(binary: Binary, decompiler: Decompiler):

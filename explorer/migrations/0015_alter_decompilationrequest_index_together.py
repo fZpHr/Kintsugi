@@ -10,8 +10,18 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterIndexTogether(
-            name='decompilationrequest',
-            index_together={('created', 'completed')},
+        # The database operation is skipped: the matching removal in migration
+        # 0017 cannot drop this composed index on SQLite under Django 5.1+
+        # ("Found wrong number (0) of constraints"). The index is created and
+        # removed within the same migration history, so skipping it at the DB
+        # level (while keeping migration state correct) has no net effect.
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AlterIndexTogether(
+                    name='decompilationrequest',
+                    index_together={('created', 'completed')},
+                ),
+            ],
+            database_operations=[],
         ),
     ]

@@ -45,7 +45,8 @@ class BinarySerializer(WriteOnceMixin, serializers.ModelSerializer):
 
     class Meta:
         model = Binary
-        fields = ['id', 'download_url', 'decompilations_url', 'file']
+        fields = ['id', 'name', 'download_url', 'decompilations_url', 'file']
+        read_only_fields = ['name']
         extra_kwargs = {'file': {'write_only': True}}
 
     def create(self, validated_data):
@@ -53,12 +54,16 @@ class BinarySerializer(WriteOnceMixin, serializers.ModelSerializer):
         for chunk in validated_data['file'].chunks():
             hash_obj.update(chunk)
         file_hash = hash_obj.hexdigest()
+        name = (validated_data['file'].name or '')[:255]
         try:
             binary = Binary._default_manager.get(hash=file_hash)
+            if not binary.name:
+                binary.name = name
             binary.save()
             return binary
         except Binary.DoesNotExist:
             validated_data['hash'] = file_hash
+            validated_data['name'] = name
             return super().create(validated_data)
 
     def get_download_url(self, obj):

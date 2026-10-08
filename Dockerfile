@@ -19,6 +19,10 @@ ENV PATH=/home/backend_user/.local/bin:$PATH
 COPY Pipfile.lock .
 RUN pipenv sync
 
+# anthropic is not pinned in Pipfile.lock (used by the AI analysis); install it
+# into the pipenv-managed virtualenv so `pipenv run ...` can import it.
+RUN pipenv run pip install "anthropic>=1.11,<2"
+
 RUN mkdir media staticfiles
 
 COPY manage.py .

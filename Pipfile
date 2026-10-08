@@ -12,6 +12,7 @@ psycopg = "~=3.3.4"
 whitenoise = {version = "~=6.0", extras = ["brotli"]}
 pymemcache = "~=4.0"
 django-storages = {extras = ["s3"], version = "~=1.13"}
+anthropic = ">=1.11,<2"
 
 [dev-packages]
 django-debug-toolbar = "~=7.0.0"

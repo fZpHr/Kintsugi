@@ -1,431 +1,334 @@
+// Workspace: binary upload, live decompiler results, tabs and the first two
+// pipeline stages. The AI stages live in ai.js, which listens to the
+// `fusion:binary` and `fusion:progress` events dispatched here.
+
 ace.config.set('basePath', 'https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.14/');
 
-let decompilerContainers = Object.fromEntries(
-    Object.values(document.getElementsByClassName("decompiler_container"))
-    .map(i => [i.id.replace(/(^container_)/, ''), i])
-);
+(function () {
+    const F = Fusion;
+    const decompilers = JSON.parse(document.getElementById('decompilers_json').textContent);
+    const names = Object.keys(decompilers);
+    const workspace = document.getElementById('workspace');
+    const fileInput = document.getElementById('file');
 
-let decompilerFrames = Object.fromEntries(
-    Object.values(document.getElementsByClassName("decompiler_output"))
-    .map(i => {
-        let id = i.id;
-        let editor = ace.edit(id);
-        editor.setReadOnly(true);
-        editor.setHighlightActiveLine(true);
-        editor.setHighlightGutterLine(true);
-        editor.session.setMode("ace/mode/c_cpp");
-        return [id, editor];
-    })
-);
+    const panes = {};
+    const chips = {};
+    document.querySelectorAll('.decompiler-pane').forEach((p) => { panes[p.dataset.decompiler] = p; });
+    document.querySelectorAll('.dchip').forEach((c) => { chips[c.dataset.decompiler] = c; });
+    names.forEach((name) => F.makeEditor(name));
 
-let decompilerTitles = Object.fromEntries(
-    Object.values(document.getElementsByClassName("decompiler_title"))
-    .map(i => [i.id.replace(/(^title_)/, ''), i])
-);
+    // --- Tabs ----------------------------------------------------------------
+    const tabs = document.querySelectorAll('#main_tabs .tab');
 
-let decompilerVersions = Object.fromEntries(
-    Object.values(document.getElementsByClassName("decompiler_version"))
-    .map(i => [i.id.replace(/(^version_)/, ''), i])
-);
+    function showTab(name) {
+        tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
+        document.querySelectorAll('[data-tab-panel]').forEach((panel) => {
+            panel.hidden = panel.dataset.tabPanel !== name;
+            if (!panel.hidden) F.resizeEditors(panel);
+        });
+    }
+    F.showTab = showTab;
 
-let decompilerRerunButtons = Object.fromEntries(
-    Object.values(document.getElementsByClassName("decompiler_rerun"))
-    .map(i => [i.id.replace(/(^rerun_)/, ''), i])
-);
+    tabs.forEach((tab) => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
+    showTab(F.aiAvailable() ? 'ai' : 'decompilers');
 
-let decompilerSelectChecks = Object.fromEntries(
-    Object.values(document.getElementsByClassName("decompiler_select"))
-    .map(i => [i.id.replace(/(^select_)/, ''), i])
-);
+    // Home page notice when no AI provider is set up yet.
+    const aiNotice = document.getElementById('ai_notice');
+    const updateNotice = () => { aiNotice.hidden = F.aiAvailable(); };
+    document.addEventListener('fusion:settings', updateNotice);
+    updateNotice();
 
-let decompilerResultUrls = {};
+    // --- Showing / hiding decompilers ----------------------------------------
+    const hidden = new Set(F.store.get('hidden_decompilers', []));
 
-let decompilers = JSON.parse(document.getElementById("decompilers_json").textContent);
+    function applyVisibility() {
+        names.forEach((name) => {
+            panes[name].hidden = hidden.has(name);
+            chips[name].classList.toggle('off', hidden.has(name));
+        });
+        F.resizeEditors(document.getElementById('tab_decompilers'));
+    }
 
-Object.keys(decompilerSelectChecks).forEach((decompiler) => {
-    let check = decompilerSelectChecks[decompiler];
-    let info = decompilers[decompiler];
-    check.checked = info.featured;
-    check.addEventListener('change', () => {
-        info.featured = check.checked;
-        updateFrames();
+    names.forEach((name) => {
+        chips[name].addEventListener('click', () => {
+            hidden.has(name) ? hidden.delete(name) : hidden.add(name);
+            F.store.set('hidden_decompilers', [...hidden]);
+            applyVisibility();
+        });
+    });
+    applyVisibility();
+
+    // --- Results -------------------------------------------------------------
+    // Latest result per decompiler name for the current binary.
+    let results = {};
+    let pollTimer = null;
+    let waitTimer = null;
+    let pollToken = 0;
+    // Cursor moves caused by loading text must not be written to the URL hash.
+    const loading = {};
+
+    function setStatus(name, status, detail) {
+        panes[name].dataset.status = status;
+        chips[name].dataset.status = status;
+        chips[name].querySelector('.dchip-time').textContent = detail || '';
+    }
+
+    function setText(name, text) {
+        loading[name] = true;
+        F.setText(name, text);
+        loading[name] = false;
+    }
+
+    function emitProgress() {
+        const done = Object.keys(results).length;
+        const failed = Object.values(results).filter((r) => r.error !== null).length;
+        const total = names.length;
+
+        document.getElementById('decompilers_badge').textContent = `${done}/${total}`;
+        document.getElementById('decompile_progress').style.width = total ? `${(100 * done) / total}%` : '0';
+        let sub = `${done}/${total} done`;
+        if (failed) sub += ` · ${failed} failed`;
+        F.setStage('decompile', done < total ? 'active' : (done > failed ? 'done' : 'error'), sub);
+
+        F.state.progress = {done, total, failed, succeeded: done - failed};
+        document.dispatchEvent(new CustomEvent('fusion:progress', {detail: F.state.progress}));
+    }
+
+    // Is version string `a` older than `b`?
+    function olderVersion(a, b) {
+        const pa = a.split(/[.-]/);
+        const pb = b.split(/[.-]/);
+        for (let i = 0; i < Math.min(pa.length, pb.length); i++) {
+            const na = parseInt(pa[i]);
+            const nb = parseInt(pb[i]);
+            const [x, y] = isNaN(na) || isNaN(nb) ? [pa[i], pb[i]] : [na, nb];
+            if (x !== y) return x < y;
+        }
+        return pa.length < pb.length;
+    }
+
+    async function fetchAll(url) {
+        const items = [];
+        while (url) {
+            const data = await (await fetch(url)).json();
+            items.push(...data.results);
+            url = data.next;
+        }
+        return items;
+    }
+
+    async function readResultText(url) {
+        const blob = await (await fetch(url)).blob();
+        // Runners upload gzip-compressed outputs; pass anything else through.
         try {
-            if (check.checked) {
-                umami.track("Show decompiler " + info.name);
-            } else {
-                umami.track("Hide decompiler " + info.name);
-            }
+            const stream = blob.stream().pipeThrough(new DecompressionStream('gzip'));
+            return await new Response(stream).text();
         } catch (e) {
-
-        }
-    });
-});
-
-document.querySelector("#binary_upload_form input[name='file']").required = true;
-
-let numDecompilers = Object.keys(decompilerFrames).length;
-let resultUrl;
-
-// For keeping track of line change events-- they will also trigger when we update the contents
-// of the textbox, so we need to ignore those.
-let loading = {};
-
-function logError(err_title, err_msg, do_alert=false) {
-    console.error(err_title, err_msg);
-    if (do_alert) {
-        alert(err_title);
-    }
-}
-
-function clearOutput(decompiler_name) {
-    updateTextEdit(decompiler_name, "");
-    decompilerRerunButtons[decompiler_name].hidden = true;
-    delete decompilerResultUrls[decompiler_name];
-}
-
-function updateFrames() {
-    let hasPrevious = false;
-    Object.keys(decompilerContainers).forEach((decompiler) => {
-        let info = decompilers[decompiler];
-
-        if (hasPrevious) {
-            decompilerContainers[decompiler].classList.add('with_line');
-        } else {
-            decompilerContainers[decompiler].classList.remove('with_line');
-        }
-
-        if (info.featured) {
-            decompilerContainers[decompiler].classList.remove('hidden');
-            hasPrevious = true;
-        } else {
-            decompilerContainers[decompiler].classList.add('hidden');
-        }
-    });
-}
-
-function clearFrameInputs() {
-    Object.keys(decompilerFrames).forEach(i => updateTextEdit(i, ""));
-    Object.values(decompilerRerunButtons).forEach(i => i.hidden = true);
-}
-
-function updateTextEdit(decompiler_name, contents) {
-    loading[decompiler_name] = true;
-    decompilerFrames[decompiler_name].session.getDocument().setValue(contents);
-    decompilerFrames[decompiler_name].resize();
-    loading[decompiler_name] = false;
-}
-
-
-function displayResult(resultData, is_sample) {
-    // If a new decompiler comes online before we refresh, it won't be in the list
-    if (Object.keys(decompilers).indexOf(resultData['decompiler']['name']) === -1)
-        return;
-    let url = resultData['download_url'];
-    let analysis_time = resultData['analysis_time'];
-    let created = new Date(resultData['created']);
-    let decompiler_name = resultData['decompiler']['name'];
-    let decompiler_version = resultData['decompiler']['version'];
-    let decompiler_revision = resultData['decompiler']['revision'];
-    let frame = decompilerFrames[decompiler_name];
-    let rerun_button = decompilerRerunButtons[decompiler_name];
-    decompilerResultUrls[decompiler_name] = resultData['url'];
-    decompilerTitles[decompiler_name].innerText = `${decompiler_name}`;
-    if (decompiler_revision !== '') {
-        if (decompiler_revision.length > 8) {
-            decompiler_revision = decompiler_revision.substring(0, 8);
-        }
-        decompilerVersions[decompiler_name].innerText = `${decompiler_version} (${decompiler_revision})`;
-    } else {
-        decompilerVersions[decompiler_name].innerText = `${decompiler_version}`;
-    }
-    decompilerVersions[decompiler_name].setAttribute("title", `${decompiler_name} version ${decompiler_version}\nAnalysed ${created}\nAnalysis took ${analysis_time.toFixed(2)} seconds`);
-
-    if (resultData['error'] !== null) {
-        updateTextEdit(decompiler_name, `Error decompiling: ${resultData['error']}`);
-        rerun_button.hidden = is_sample;
-        return;
-    }
-
-    fetch(url)
-    .then(resp => resp.blob())
-    .then(async data => {
-        const ds = new DecompressionStream("gzip");
-        // Try to decompress as gzip, if it isn't valid gzip just pass the data through
-        const decompressedStream = data.stream().pipeThrough(ds);
-        try {
-            return await new Response(decompressedStream).blob();
-        } catch (err) {
-            return data;
-        }
-    })
-    .then(data => data.text())
-    .then(data => {
-        updateTextEdit(decompiler_name, data);
-        loading[decompiler_name] = true;
-        let lineNumbers = new URLSearchParams(window.location.hash.substring(1));
-        let row = lineNumbers.get(decompiler_name);
-        if (row !== null) {
-            frame.gotoLine(parseInt(row));
-        }
-        rerun_button.hidden = is_sample;
-        loading[decompiler_name] = false;
-    })
-    .catch(err => {
-        logError("Error retrieving result", err);
-        updateTextEdit(decompiler_name, "// Error retrieving result: " + err);
-    })
-}
-
-let refreshSchedule = -1;
-let timerSchedule = -1;
-
-function compareVersions(thisVersionStr, otherVersionStr) {
-    // Compare versions and, if otherer, overwrite
-    let thisVersion = thisVersionStr.split(".").flatMap(version => version.split('-'));
-    let otherVersion = otherVersionStr.split(".").flatMap(version => version.split('-'));
-    for (let i = 0; i < Math.min(thisVersion.length, otherVersion.length); i++) {
-        let thisVi = parseInt(thisVersion[i]);
-        let otherVi = parseInt(otherVersion[i]);
-        if (!isNaN(thisVi) && !isNaN(otherVi)) {
-            if (parseInt(thisVersion[i]) < parseInt(otherVersion[i]))
-                return true;
-            if (parseInt(thisVersion[i]) > parseInt(otherVersion[i]))
-                return false;
-        } else {
-            if (thisVersion[i] < otherVersion[i])
-                return true;
-            if (thisVersion[i] > otherVersion[i])
-                return false;
+            return await blob.text();
         }
     }
-    if (thisVersion.length < otherVersion.length)
-        return true;
-    if (thisVersion.length > otherVersion.length)
-        return false;
-    return false;
-}
 
-async function fetchArray(url) {
-    let results = [];
-    let nextUrl = url;
-    while (nextUrl !== null) {
-        let resp = await fetch(nextUrl);
-        let data = await resp.json();
-        results.push(...data["results"]);
-        nextUrl = data["next"];
-    }
-    return results;
-}
+    function showResult(result) {
+        const name = result.decompiler.name;
+        const pane = panes[name];
+        let version = result.decompiler.version;
+        if (result.decompiler.revision) version += ` (${result.decompiler.revision.substring(0, 8)})`;
+        const time = result.analysis_time == null ? '' : F.seconds(result.analysis_time);
+        pane.querySelector('.decompiler-version').textContent = time ? `${version} · ${time}` : version;
+        pane.querySelector('[data-rerun]').hidden = false;
 
-function loadResults(is_sample) {
-    let finishedResults = [];
-    let startTime = Date.now();
-
-    let timerUpdate = () => {
-        if (timerSchedule !== -1) {
-            clearTimeout(timerSchedule);
-        }
-
-        for (let decompilerName of Object.keys(decompilers)) {
-            if (finishedResults.indexOf(decompilerName) === -1) {
-                let elapsedSecs = ((Date.now() - startTime) / 1000).toFixed(0);
-                updateTextEdit(decompilerName, "// Waiting for data... (" + elapsedSecs + "s)");
-            }
-        }
-        if (finishedResults.length < numDecompilers) {
-            timerSchedule = setTimeout(timerUpdate, 1000);
-        }
-    };
-    let refresh = () => {
-        if (refreshSchedule !== -1) {
-            clearTimeout(refreshSchedule);
-        }
-
-        fetchArray(resultUrl)
-            .then(data => {
-                let bestVersions = {};
-                for (let i of data) {
-                    if (!Object.keys(bestVersions).includes(i['decompiler']['name'])) {
-                        bestVersions[i['decompiler']['name']] = i;
-                        continue;
-                    }
-
-                    let oldBest = bestVersions[i['decompiler']['name']];
-                    let oldVersion = oldBest['decompiler']['version'];
-                    let newVersion = i['decompiler']['version'];
-
-                    if (compareVersions(oldVersion, newVersion)) {
-                        bestVersions[i['decompiler']['name']] = i;
-                    }
-                }
-
-                for (let i of Object.values(bestVersions)) {
-                    if (i['decompiler'] === null)
-                        continue;
-                    let decompilerName = i['decompiler']['name'];
-                    if (!finishedResults.includes(decompilerName)) {
-                        displayResult(i, is_sample);
-                        finishedResults.push(decompilerName);
-                    }
-                }
-            })
-            .catch((e) => {
-                console.error(e);
-            })
-            .finally(() => {
-                if (finishedResults.length < numDecompilers) {
-                    refreshSchedule = setTimeout(refresh, 5000);
-                }
-            })
-    };
-
-    refresh();
-    timerUpdate();
-}
-
-
-function uploadBinary() {
-    resultUrl = undefined;
-    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
-
-    let uploadForm = document.getElementById('binary_upload_form');
-    if (!uploadForm.checkValidity()) {
-        uploadForm.reportValidity();
-        return;
-    }
-    let formData = new FormData(uploadForm);
-
-    fetch('/api/binaries/', {
-        method: 'POST',
-        body: formData,
-        headers: {'X-CSRFToken': csrfToken},
-        mode: 'same-origin'
-    })
-    .then(async(resp) => {
-        if (resp.ok) {
-            return resp.json();
-        }
-        else {
-            if (resp.status == 413) {
-                throw Error("File too large");
-            }
-            if (resp.status == 429) {
-                throw Error((await resp.json())['detail']);
-            }
-            else {
-                throw Error("Error uploading binary");
-            }
-        }
-    })
-    .then(data => {
-        addHistoryEntry(data['id']);
-        loadAllDecompilers(data['id'], false);
-    })
-    .catch(err => {
-        logError(err, err, true);
-    });
-}
-
-function loadAllDecompilers(binary_id, is_sample) {
-    resultUrl = `${location.origin}${location.pathname}api/binaries/${binary_id}/decompilations/`;
-    loadResults(is_sample);
-}
-
-function addHistoryEntry(binary_id) {
-    const url = new URL(window.location);
-    url.searchParams.set('id', binary_id);
-    window.history.pushState({}, '', url);
-}
-
-function rerunDecompiler(decompiler_name) {
-    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
-
-    fetch(decompilerResultUrls[decompiler_name] + 'rerun/', {
-        method: 'POST',
-        headers: {'X-CSRFToken': csrfToken},
-        mode: 'same-origin'
-    })
-    .then(resp => {
-        if (!resp.ok) {
-            throw Error("Error rerunning binary");
-        }
-    })
-    .then(() => {
-        clearOutput(decompiler_name);
-        loadResults(false);
-    })
-    .catch(err => {
-        logError(err, err, true);
-    });
-    try {
-        umami.track("Rerun decompiler " + decompiler_name);
-    } catch (e) {
-
-    }
-}
-
-
-document.getElementById('file').addEventListener('change', (e) => {
-    e.preventDefault();
-    clearFrameInputs();
-    uploadBinary();
-});
-document.getElementById('samples').addEventListener('change', (e) => {
-    let id = document.getElementById('samples').value;
-    if (id != '') {
-        e.preventDefault();
-        clearFrameInputs();
-        addHistoryEntry(id);
-        loadAllDecompilers(id, true);
-    }
-});
-
-for (const decompiler of Object.keys(decompilerFrames)) {
-    decompilerFrames[decompiler].session.selection.on("changeCursor", function(e, selection) {
-        if (loading[decompiler])
+        if (result.error !== null) {
+            setStatus(name, 'failed', 'failed');
+            setText(name, `// ${name} failed: ${result.error}`);
             return;
-        const row = selection.getCursor()['row'] + 1;
-        let lineNumbers = new URLSearchParams(window.location.hash.substring(1));
-        lineNumbers.set(decompiler, row);
-        window.location.hash = lineNumbers.toString();
-    });
-}
-
-Object.entries(decompilerRerunButtons)
-    .forEach(([name, elem]) => {
-        elem.addEventListener('click', (e) => {
-            e.preventDefault();
-            rerunDecompiler(name);
-        })
-    });
-updateFrames();
-
-let params = new URL(location).searchParams;
-let id = params.get("id");
-if (id !== null) {
-    let wasSample = false;
-    let sampleSelect = document.getElementById('samples');
-    for (let i = 0; i < sampleSelect.childElementCount; i ++) {
-        if (sampleSelect.children[i].value === id) {
-            sampleSelect.value = id;
-            wasSample = true;
-            break;
         }
+        setStatus(name, 'done', time);
+        readResultText(result.download_url)
+            .then((text) => {
+                setText(name, text);
+                const row = new URLSearchParams(location.hash.substring(1)).get(name);
+                if (row !== null) {
+                    loading[name] = true;
+                    F.editors[name].gotoLine(parseInt(row));
+                    loading[name] = false;
+                }
+            })
+            .catch((err) => setText(name, `// Error retrieving the result: ${err}`));
     }
 
-    if (!wasSample) {
-        sampleSelect.value = "";
-    }
-
-    loadAllDecompilers(id, wasSample);
-}
-
-setTimeout(() => {
-    if (document.getElementById("banner") !== null) {
+    async function poll(token) {
+        pollTimer = null;
         try {
-            umami.track("Shown queue banner");
-        } catch (e) {
-
+            const items = await fetchAll(`${F.API}binaries/${F.state.binaryId}/decompilations/`);
+            if (token !== pollToken) return;
+            const latest = {};
+            for (const item of items) {
+                const name = item.decompiler && item.decompiler.name;
+                if (!(name in decompilers)) continue;
+                if (!latest[name] || olderVersion(latest[name].decompiler.version, item.decompiler.version)) {
+                    latest[name] = item;
+                }
+            }
+            for (const [name, item] of Object.entries(latest)) {
+                if (name in results) continue;
+                results[name] = item;
+                showResult(item);
+            }
+        } catch (err) {
+            console.error(err);
+        }
+        if (token !== pollToken) return;
+        emitProgress();
+        if (Object.keys(results).length < names.length) {
+            pollTimer = setTimeout(() => poll(token), 3000);
         }
     }
-}, 1000);
+
+    function startWaitTimer() {
+        clearInterval(waitTimer);
+        const started = Date.now();
+        const tick = () => {
+            const pending = names.filter((name) => !(name in results));
+            if (!pending.length) {
+                clearInterval(waitTimer);
+                return;
+            }
+            const secs = F.seconds((Date.now() - started) / 1000);
+            pending.forEach((name) => setText(name, `// Waiting for ${name}... (${secs})`));
+        };
+        tick();
+        waitTimer = setInterval(tick, 1000);
+    }
+
+    function startPolling() {
+        clearTimeout(pollTimer);
+        results = {};
+        names.forEach((name) => {
+            setStatus(name, 'waiting', '');
+            panes[name].querySelector('[data-rerun]').hidden = true;
+        });
+        startWaitTimer();
+        poll(++pollToken);
+    }
+
+    function rerun(name) {
+        const result = results[name];
+        if (!result) return;
+        fetch(result.url + 'rerun/', {
+            method: 'POST',
+            headers: {'X-CSRFToken': F.csrf()},
+            mode: 'same-origin',
+        })
+            .then((resp) => {
+                if (!resp.ok) throw Error(`Could not re-run ${name} (HTTP ${resp.status}).`);
+                delete results[name];
+                setStatus(name, 'waiting', '');
+                panes[name].querySelector('[data-rerun]').hidden = true;
+                startWaitTimer();
+                emitProgress();
+                if (pollTimer === null) poll(pollToken);
+            })
+            .catch((err) => F.toast(err.message, 'error'));
+    }
+
+    names.forEach((name) => {
+        panes[name].querySelector('[data-rerun]').addEventListener('click', () => rerun(name));
+        F.editors[name].session.selection.on('changeCursor', () => {
+            if (loading[name]) return;
+            const params = new URLSearchParams(location.hash.substring(1));
+            params.set(name, F.editors[name].getCursorPosition().row + 1);
+            history.replaceState(null, '', '#' + params.toString());
+        });
+    });
+
+    // --- Binary --------------------------------------------------------------
+    function showBinaryInfo(name, size) {
+        F.state.binaryName = name || F.state.binaryId.substring(0, 8);
+        document.getElementById('binary_name').textContent = F.state.binaryName;
+        document.getElementById('binary_meta').textContent = size ? F.bytes(size) : '';
+        F.setStage('upload', 'done', size ? F.bytes(size) : 'Uploaded');
+    }
+
+    function loadBinary(id) {
+        F.state.binaryId = id;
+        // What this browser remembers of its own uploads, until the server answers.
+        const local = F.store.get('bin:' + id, {});
+        showBinaryInfo(local.name, local.size);
+        if (F.config.historyEnabled) {
+            fetch(`${F.API}history/${id}`)
+                .then((resp) => (resp.ok ? resp.json() : null))
+                .then((item) => {
+                    if (item && F.state.binaryId === id) showBinaryInfo(item.name || local.name, item.size);
+                })
+                .catch(() => {});
+        }
+
+        document.getElementById('hero').hidden = true;
+        workspace.hidden = false;
+        document.body.classList.add('has-binary');
+        document.getElementById('new_binary').hidden = false;
+        document.getElementById('binary_info').hidden = false;
+        document.getElementById('binary_name').title = id;
+
+        showTab(document.querySelector('#main_tabs .tab.active').dataset.tab);
+        F.state.progress = {done: 0, total: names.length, failed: 0, succeeded: 0};
+        startPolling();
+        document.dispatchEvent(new CustomEvent('fusion:binary', {detail: {id}}));
+    }
+
+    async function upload(file) {
+        if (!file) return;
+        const form = new FormData();
+        form.append('file', file);
+        F.toast(`Uploading ${file.name}...`);
+        try {
+            const resp = await fetch(`${F.API}binaries/`, {
+                method: 'POST',
+                body: form,
+                headers: {'X-CSRFToken': F.csrf()},
+                mode: 'same-origin',
+            });
+            if (!resp.ok) {
+                throw Error(resp.status === 413 ? 'File too large.' : `Upload failed (HTTP ${resp.status}).`);
+            }
+            const data = await resp.json();
+            F.store.set('bin:' + data.id, {name: file.name, size: file.size});
+            const url = new URL(location);
+            url.search = `?id=${data.id}`;
+            url.hash = '';
+            history.pushState({}, '', url);
+            loadBinary(data.id);
+        } catch (err) {
+            F.toast(err.message, 'error');
+        }
+    }
+
+    fileInput.addEventListener('change', () => {
+        upload(fileInput.files[0]);
+        fileInput.value = '';
+    });
+
+    // Drag & drop a binary anywhere on the page.
+    let dragDepth = 0;
+    window.addEventListener('dragenter', (e) => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        dragDepth++;
+        document.body.classList.add('dragging');
+    });
+    window.addEventListener('dragleave', () => {
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (!dragDepth) document.body.classList.remove('dragging');
+    });
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragDepth = 0;
+        document.body.classList.remove('dragging');
+        upload(e.dataTransfer.files[0]);
+    });
+
+    window.addEventListener('popstate', () => location.reload());
+
+    const id = new URLSearchParams(location.search).get('id');
+    if (id !== null) loadBinary(id);
+})();

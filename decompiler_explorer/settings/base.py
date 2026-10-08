@@ -18,6 +18,34 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
+def _load_dotenv(path):
+    """Load KEY=VALUE pairs from a .env file into os.environ.
+
+    Values already present in the real environment win (so Docker/CI env vars
+    are never overridden). Kept dependency-free on purpose so it works before
+    `pipenv install`. Supports comments (#), optional `export ` prefix and
+    single/double quoted values.
+    """
+    if not path.exists():
+        return
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[len('export '):].strip()
+        if '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv(BASE_DIR / '.env')
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
 
@@ -85,6 +113,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'explorer.context_processors.app_settings',
             ],
         },
     },
@@ -166,12 +195,12 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.TokenAuthentication',
     ],
+    # JSON only - the DRF browsable API (HTML) is disabled.
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 50,
-    'DEFAULT_THROTTLE_RATES': {
-        'anon_burst': '6/min',
-        'anon_sustained': '60/hour',
-    }
 }
 
 # Default primary key field type
@@ -183,6 +212,58 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 UPLOAD_COMPILED_PATH = 'uploads/binaries'
 UPLOAD_DECOMPILED_PATH = 'uploads/decompilations'
+
+# AI analysis. The server's own key (below) is used unless the browser sends
+# one, set by the user in the Settings dialog.
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+# Any OpenAI-compatible API: OpenAI, Mistral, OpenRouter, Groq, Ollama, ...
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+
+# The server's provider: "gemini", "anthropic" or "openai". Defaults to the
+# first one with a key.
+AI_PROVIDER = os.environ.get('AI_PROVIDER') or next(
+    (p for p, key in [('gemini', GEMINI_API_KEY), ('anthropic', ANTHROPIC_API_KEY),
+                      ('openai', OPENAI_API_KEY)] if key),
+    'gemini',
+)
+
+# Gemini: GEMINI_MODEL (or the model chosen in the browser) is tried first,
+# then each fallback (comma separated) when it is overloaded, out of quota or
+# retired.
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL') or 'gemini-3.5-flash'
+GEMINI_FALLBACK_MODELS = [
+    m.strip()
+    for m in (os.environ.get('GEMINI_FALLBACK_MODELS') or 'gemini-3.8-flash,gemini-3.1-flash-lite').split(',')
+    if m.strip()
+]
+# AI_MODEL is the former name of ANTHROPIC_MODEL.
+ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL') or os.environ.get('AI_MODEL') or 'claude-sonnet-5-5'
+OPENAI_BASE_URL = (os.environ.get('OPENAI_BASE_URL') or 'https://api.openai.com/v1').rstrip('/')
+OPENAI_MODEL = os.environ.get('OPENAI_MODEL', '')
+
+# Let users enter their own API key in the browser, and (for OpenAI-compatible
+# APIs) their own base URL. On a public instance, turn AI_ALLOW_CUSTOM_BASE_URL
+# off: the server would otherwise send requests to any URL it is given.
+AI_ALLOW_BROWSER_KEYS = os.environ.get('AI_ALLOW_BROWSER_KEYS', '1') == '1'
+AI_ALLOW_CUSTOM_BASE_URL = os.environ.get('AI_ALLOW_CUSTOM_BASE_URL', '1') == '1'
+
+# Max output tokens. Unset, it is 65536 for Gemini (its thinking tokens count
+# against the limit), 32000 for Claude, and left to the API for the others.
+AI_MAX_TOKENS = int(os.environ['AI_MAX_TOKENS']) if os.environ.get('AI_MAX_TOKENS') else None
+# Total size (in characters) of the decompiler outputs sent to the model; the
+# longest outputs are truncated to fit. ~600k chars is ~170k tokens, which
+# stays under the Gemini free tier's per-minute input token limit.
+AI_MAX_INPUT_CHARS = int(os.environ.get('AI_MAX_INPUT_CHARS') or '600000')
+# Time budget (seconds) for one AI request, and rounds of retries on transient
+# errors (Gemini only). Keep the budget below gunicorn's timeout
+# (GUNICORN_CMD_ARGS in docker-compose.yml).
+AI_REQUEST_TIMEOUT = int(os.environ.get('AI_REQUEST_TIMEOUT') or '540')
+AI_MAX_RETRIES = int(os.environ.get('AI_MAX_RETRIES') or '2')
+
+# History of the analysed binaries, shown to everyone who can open the site.
+# Turn it off on a public instance.
+HISTORY_ENABLED = os.environ.get('HISTORY_ENABLED', '1') == '1'
 
 def show_toolbar(request):
     return True

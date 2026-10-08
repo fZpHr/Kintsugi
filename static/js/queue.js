@@ -1,3 +1,4 @@
+// Queue page: pending decompilation jobs, overall and per decompiler.
 
 let refreshSchedule = -1;
 
@@ -6,7 +7,7 @@ function updateQueue() {
         clearTimeout(refreshSchedule);
     }
 
-    fetch("/api/queue")
+    fetch(Fusion.API + 'queue')
         .then(resp => {
             if (resp.ok) {
                 return resp.json();
@@ -26,52 +27,44 @@ function updateQueue() {
 updateQueue();
 
 
+function queueCard(title, subtitle, info, extraClass) {
+    let card = document.createElement("div");
+    card.className = "queue-card" + (extraClass ? " " + extraClass : "");
+
+    let header = document.createElement("h2");
+    header.textContent = title;
+    if (subtitle) {
+        let small = document.createElement("small");
+        small.textContent = " " + subtitle;
+        header.append(small);
+    }
+
+    let count = document.createElement("p");
+    count.className = "count";
+    count.textContent = info.queue_length === 0 ? "Empty" : info.queue_length + " pending";
+
+    let detail = document.createElement("p");
+    if (info.queue_length !== 0 && info.oldest_unfinished) {
+        detail.textContent = "Oldest job: " + new Date(info.oldest_unfinished).toLocaleString();
+    }
+
+    card.append(header, count, detail);
+    return card;
+}
+
+
 function setQueue(data) {
     let queueDiv = document.getElementById("queue");
-    while (queueDiv.firstChild) {
-        queueDiv.firstChild.remove();
-    }
 
-    let generalHeader = document.createElement("h3");
-    generalHeader.innerText = "Overall Queue Stats:";
-    queueDiv.append(generalHeader)
+    let decomps = Object.values(data.per_decompiler).sort((a, b) =>
+        a.decompiler.name.toLowerCase().localeCompare(b.decompiler.name.toLowerCase()));
 
-    let generalContent = document.createElement("p");
-
-    if (data.general.queue_length === 0) {
-        generalContent.innerText = "Queue is empty!";
-    } else {
-        generalContent.append("Queue size: " + data.general.queue_length.toString());
-        generalContent.append(document.createElement("br"));
-        generalContent.append("Oldest unfinished job: " + new Date(data.general.oldest_unfinished).toString());
-    }
-    queueDiv.append(generalContent);
-
-    let decomps = Object.keys(data.per_decompiler).sort((a, b) => {
-        let aName = data.per_decompiler[a].decompiler.name.toLowerCase();
-        let bName = data.per_decompiler[b].decompiler.name.toLowerCase();
-        if (aName < bName)
-            return -1;
-        if (aName > bName)
-            return 1;
-        return 0;
-    });
-
-    for (let id of decomps) {
-        let decompQueue = data.per_decompiler[id];
-
-        let decompHeader = document.createElement("h4");
-        decompHeader.innerText = decompQueue.decompiler.name + " " + decompQueue.decompiler.version + (decompQueue.decompiler.revision === "" ? "" : " (") + decompQueue.decompiler.revision + (decompQueue.decompiler.revision === "" ? "" : ")") + ":";
-        queueDiv.append(decompHeader)
-
-        let decompContent = document.createElement("p");
-        if (decompQueue.queue_length === 0) {
-            decompContent.innerText = "Queue is empty!";
-        } else {
-            decompContent.append("Queue size: " + decompQueue.queue_length.toString());
-            decompContent.append(document.createElement("br"));
-            decompContent.append("Oldest unfinished job: " + new Date(decompQueue.oldest_unfinished).toString());
-        }
-        queueDiv.append(decompContent);
-    }
+    queueDiv.replaceChildren(
+        queueCard("All decompilers", "", data.general, "queue-card-overall"),
+        ...decomps.map(q => {
+            let revision = q.decompiler.revision ? ` (${q.decompiler.revision.substring(0, 8)})` : "";
+            let version = q.decompiler.version + revision;
+            return queueCard(q.decompiler.name, version, q);
+        })
+    );
 }

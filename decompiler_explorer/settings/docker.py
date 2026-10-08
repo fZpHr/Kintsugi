@@ -62,11 +62,21 @@ LOGGING = {
             'level': 'INFO' if DEBUG else 'ERROR',
             'class': 'logging.StreamHandler',
         },
+        'ai_console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+        },
     },
     'loggers': {
         'django': {
             'handlers': ['console'],
             'level': 'INFO' if DEBUG else 'ERROR',
+        },
+        # AI synthesis calls (model used, timings, fallbacks) are always logged.
+        'explorer.ai': {
+            'handlers': ['ai_console'],
+            'level': 'INFO',
+            'propagate': False,
         },
     }
 }
