@@ -11,6 +11,11 @@
 </p>
 
 <p align="center">
+  A fork of <a href="https://github.com/decompiler-explorer/decompiler-explorer">Decompiler Explorer</a>
+  (<a href="https://dogbolt.org">dogbolt.org</a>) by Vector 35.
+</p>
+
+<p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3f5ee8">
   <img alt="9 decompilers" src="https://img.shields.io/badge/decompilers-9-3f5ee8">
   <img alt="LLM: Gemini, Claude, OpenAI-compatible" src="https://img.shields.io/badge/LLM-Gemini%20%C2%B7%20Claude%20%C2%B7%20OpenAI--compatible-3f5ee8">
@@ -21,7 +26,9 @@
 
 ---
 
-Every decompiler gets part of a binary right: one recovers the types, another the control flow, a third the string constants. Kintsugi runs them all on the binary you upload and shows their outputs side by side, like [dogbolt.org](https://dogbolt.org). Then it uses an LLM to **join the parts each one gets right into a single listing, keeping the seams visible**: every merged function says which decompiler it comes from.
+Kintsugi is a fork of [Decompiler Explorer](https://github.com/decompiler-explorer/decompiler-explorer), the open-source project behind [dogbolt.org](https://dogbolt.org). It keeps what Decompiler Explorer does, running many decompilers on the binary you upload and showing their outputs side by side, and adds a step on top.
+
+Every decompiler gets part of a binary right: one recovers the types, another the control flow, a third the string constants. Kintsugi uses an LLM to **join the parts each one gets right into a single listing, keeping the seams visible**: every merged function says which decompiler it comes from.
 
 > *Kintsugi (金継ぎ) is the Japanese art of repairing broken pottery with gold, so that the cracks stay visible instead of hidden.*
 
@@ -87,6 +94,19 @@ int main(int argc, char **argv)
  * ...
  */
 ```
+
+## What this fork changes
+
+Compared with [Decompiler Explorer](https://github.com/decompiler-explorer/decompiler-explorer), Kintsugi:
+
+- **adds** the LLM merge and interpretation of the decompiler outputs, with Gemini, Claude or any OpenAI-compatible API, a key set on the server or in the browser, and analyses that run as server-side jobs and are saved;
+- **adds** a history of the analysed binaries, and skips the decompilers that can't handle a binary instead of letting them fail;
+- **redesigns** the web interface, and reports decompiler failures more clearly;
+- **is meant to run locally**: a single `docker-compose.yml` with the license-free decompilers, instead of the Swarm / Traefik / S3 deployment of dogbolt.org (the commercial decompilers can still be added with your own licenses);
+- **drops** the Dogbolt name and logo, the sample binaries and the FAQ page.
+
+The full history of Decompiler Explorer is kept in this repository.
+
 
 ## Features
 
@@ -214,11 +234,11 @@ pipenv run python manage.py runserver 0.0.0.0:8000   # the web app only, no deco
 
 ## Related projects
 
-- [Decompiler Explorer / dogbolt.org](https://github.com/decompiler-explorer/decompiler-explorer), which Kintsugi is built on: the same side-by-side comparison, including commercial decompilers, without the merge.
+- [Decompiler Explorer / dogbolt.org](https://github.com/decompiler-explorer/decompiler-explorer), which Kintsugi is a fork of: the same side-by-side comparison, including commercial decompilers on dogbolt.org, without the merge.
 - [mdec](https://github.com/mborgerson/mdec): decompilation as a service, comparing many decompilers.
 - [LLM4Decompile](https://github.com/albertan017/LLM4Decompile): LLMs fine-tuned to decompile binaries, or to refine Ghidra's output.
 
 
 ## License and credits
 
-Kintsugi is released under the MIT license, see [LICENSE.txt](LICENSE.txt). It is based on [Decompiler Explorer](https://github.com/decompiler-explorer/decompiler-explorer), Copyright (c) 2022 Vector 35 Inc, also under the MIT license. It is not affiliated with or endorsed by Vector 35, Hex-Rays or dogbolt.org.
+Kintsugi is released under the MIT license, see [LICENSE.txt](LICENSE.txt). It is a fork of [Decompiler Explorer](https://github.com/decompiler-explorer/decompiler-explorer), Copyright (c) 2022 Vector 35 Inc, also under the MIT license, whose contributors made the decompiler comparison this project builds on. It is not affiliated with or endorsed by Vector 35, Hex-Rays or dogbolt.org.
